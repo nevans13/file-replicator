@@ -6,4 +6,9 @@ A lightweight utility for versioning and replicating files between storage devic
 - [ ] Replicate files between devices (internal hard drives, external hard drives, flash drives, cloud filesystems, etc)
 - [ ] Save and index previous versions of files
 - [ ] Monitor disk space and health
-- [ ] 
+
+## Instructions
+Build the executable (Windows example below):
+```
+    go build -o file-replicator.exe .
+```
