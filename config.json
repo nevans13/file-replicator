@@ -2,7 +2,7 @@
     "ReplicationGroups": [
         {
             "Name": "My Files",
-            "FileIndex": "file_index.csv",
+            "FileIndex": "my_files_index.csv",
             "Directories": [
                 "C:\\My Files"
             ]

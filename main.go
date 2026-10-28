@@ -8,11 +8,18 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 )
+
+type ReplicationGroup struct {
+	Name        string   // name of the Replication Group
+	FileIndex   string   // name of the CSV file that holds the file index
+	Directories []string // one or more directories to include in the Replication Group's context
+}
 
 // The structure of this struct must match the JSON structure of the config file
 type Config struct {
-	Directories []string // one or more directories to include in the application's context
+	ReplicationGroups []ReplicationGroup
 }
 
 // Parse the configuration file, returning the config as an object
@@ -74,20 +81,20 @@ func getFileHash(filepath string) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
-func main() {
-	// Config file is loaded on startup and can be rechecked by relaunching the application
-	// Default to config.json in the root directory as the configuration file
-	config, err := parseConfig("config.json")
-	if err != nil {
-		log.Fatal(err)
-	}
+// This is the root function, called as goroutines, that handles the processing for a specific Replication Group
+// Each Replication Group is handled by exactly one processReplicationGroup goroutine, and each goroutine processes only one Replication Group
+// Each instance of this function is responsible for its own downstream processing (error handling, reporting, etc)
+// The fileCoordinator function coordinates access to files among the processReplicationGroup goroutines
+func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup) {
+	// Decrement the WaitGroup task counter by 1 when the processReplicationGroup function returns
+	defer wg.Done()
 
 	// filepaths holds the full path of every file identified in the configured directories
 	var filepaths []string
 
 	// Add all individual files in the directory to the filepaths array
-	for _, d := range config.Directories { // range outputs the index of the current element (ignored) and the element itself
-		err = getFiles(&filepaths, d)
+	for _, d := range rgConfig.Directories {
+		err := getFiles(&filepaths, d)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -100,4 +107,27 @@ func main() {
 		fmt.Println(hash)
 		fmt.Println()
 	}
+}
+
+func main() {
+	// Config file is loaded on startup and can be rechecked by relaunching the application
+	// Default to config.json in the root directory
+	config, err := parseConfig("config.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Start the fileCoordinator goroutine
+
+	// Create a WaitGroup to prevent early application termination until all Replication Groups are finished processing
+	var wg sync.WaitGroup
+
+	// Start concurrent processing for each Replication Group
+	for _, rgConfig := range config.ReplicationGroups { // range outputs the index of the current element (ignored) and the element itself
+		wg.Add(1) // increment the WaitGroup by 1 for each ReplicationGroup
+		go processReplicationGroup(rgConfig, &wg)
+	}
+
+	// Block return of the main function until all required goroutines complete
+	wg.Wait()
 }
