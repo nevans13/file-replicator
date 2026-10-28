@@ -1,5 +1,11 @@
 {
-    "Directories": [
-        "C:\\Temp"
+    "ReplicationGroups": [
+        {
+            "Name": "My Files",
+            "FileIndex": "file_index.csv",
+            "Directories": [
+                "C:\\My Files"
+            ]
+        }
     ]
 }
