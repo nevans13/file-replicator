@@ -81,7 +81,12 @@ func getFileHash(filepath string) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
-// This is the root function, called as goroutines, that handles the processing for a specific Replication Group
+// The fileCoordinator function allocates file permissions to each processReplicationGroup goroutine to ensure goroutines do not collide trying to process the same file
+func fileCoordinator() {
+
+}
+
+// This is the root function that handles the processing for a specific Replication Group, and it is called as a goroutine
 // Each Replication Group is handled by exactly one processReplicationGroup goroutine, and each goroutine processes only one Replication Group
 // Each instance of this function is responsible for its own downstream processing (error handling, reporting, etc)
 // The fileCoordinator function coordinates access to files among the processReplicationGroup goroutines
