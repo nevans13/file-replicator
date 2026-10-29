@@ -1,7 +1,7 @@
 {
     "Metadata": {
         "Description": [
-            "This description field is ignored by file-replicator and can be used to write context for operators."
+            "This description field is ignored by file-replicator and can be used to write context for users."
         ]
     },
     "ReplicationGroups": [

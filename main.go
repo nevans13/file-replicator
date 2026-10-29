@@ -27,6 +27,15 @@ type Config struct {
 	ReplicationGroups []ReplicationGroup
 }
 
+// This type represents the request for and results of an operation performed on a specific file
+type FileOperation struct {
+	Operation string           // the file operation to complete - read, write, create, delete, or hash
+	Filepath  string           // the path and name of the file
+	Input     string           // any input relevant to the operation (such as content to write)
+	Result    chan interface{} // the result of the file operation, such as the file contents for a read operation or the hash for a hash operation
+	Error     chan error       // any error produced during the file operation; error value is nil if the operation was successful
+}
+
 // Helper function to check if an element is in a slice for any of the comparable types
 func contains[T comparable](s []T, e T) bool {
 	for _, i := range s {
@@ -59,6 +68,15 @@ func parseConfig(configFile string) (Config, error) {
 			return Config{}, fmt.Errorf("Replication Group name '%s' in %s is not unique", r.Name, configFile)
 		}
 		replicationGroupNames = append(replicationGroupNames, r.Name)
+	}
+
+	// Validate that there are no duplicate Replication Group file indexes
+	var replicationGroupFileIndexes []string
+	for _, r := range config.ReplicationGroups {
+		if contains(replicationGroupFileIndexes, r.FileIndex) {
+			return Config{}, fmt.Errorf("Replication Group file index '%s' in %s is not unique", r.FileIndex, configFile)
+		}
+		replicationGroupFileIndexes = append(replicationGroupFileIndexes, r.FileIndex)
 	}
 
 	return config, nil
@@ -107,16 +125,37 @@ func getFileHash(filepath string) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
-// The fileController function allocates file permissions to each processReplicationGroup goroutine to ensure goroutines do not collide trying to process the same file
-func fileController() {
+// The fileController function gates file access for each processReplicationGroup goroutine to ensure goroutines do not collide trying to process the same file
+// fileController is the only function that should be performing operations on scoped files/directories (excluding file-replicator configuration and index files)
+func fileController(opsChannel chan FileOperation) {
+	// fileController receives requests over the opsChannel (file operations channel)
+	for op := range opsChannel { // range on a channel only produces one value - the element itself
+		switch op.Operation {
 
+		// Read the contents of the file, saving the contents or error in the channel
+		case "read":
+			data, err := os.ReadFile(op.Filepath)
+			op.Result <- data
+			op.Error <- err
+
+		// Return the file hash
+		case "hash":
+			hash, err := getFileHash(op.Filepath)
+			op.Result <- hash
+			op.Error <- err
+
+		// Error if an invalid file operation is specified
+		default:
+			op.Error <- fmt.Errorf("Unknown file operation '%s'", op.Operation)
+		}
+	}
 }
 
 // This is the root function that handles the processing for a specific Replication Group, and it is called as a goroutine
 // Each Replication Group is handled by exactly one processReplicationGroup goroutine, and each goroutine processes only one Replication Group
-// Each instance of this function is responsible for its own downstream processing (error handling, reporting, etc)
-// The fileController function coordinates access to files among the processReplicationGroup goroutines
-func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup) {
+// Each instance of this function is responsible for its own downstream processing (error handling, reporting, user interaction, etc)
+// The fileController function coordinates access to files among the processReplicationGroup goroutines, and communication is handled by the opsChannel
+func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsChannel chan FileOperation) {
 	// Decrement the WaitGroup task counter by 1 when the processReplicationGroup function returns
 	defer wg.Done()
 
@@ -133,7 +172,28 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup) {
 
 	// Temp testing of hashes
 	for _, h := range filepaths {
-		var hash, _ = getFileHash(h)
+		// Create error and result channels to receive output from the opsChannel
+		// These channels are made new each iteration of the loop, and the old ones are marked for garbage collection
+		errorChannel := make(chan error, 1)
+		resultChannel := make(chan interface{}, 1)
+
+		// Send the file hash request to the opsChannel for processing by fileController
+		// processReplicationGroup blocks here until fileController receives the operation
+		opsChannel <- FileOperation{
+			Operation: "hash",
+			Filepath:  h,
+			Result:    resultChannel,
+			Error:     errorChannel,
+		}
+
+		// processReplicationGroup then blocks here until fileController writes to the error channel (processing is complete)
+		err := <-errorChannel
+		if err != nil {
+			log.Printf("Hash error for %s: %v", h, err)
+			continue
+		}
+
+		var hash = <-resultChannel
 		fmt.Println(h)
 		fmt.Println(hash)
 		fmt.Println()
@@ -148,15 +208,16 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Start the fileController goroutine
+	// Create the file operations channel and start the fileController goroutine
+	// The operations channel is used as an interface for the processReplicationGroup goroutines to communicate with fileController
+	opsChannel := make(chan FileOperation)
+	go fileController(opsChannel)
 
-	// Create a WaitGroup to prevent early application termination until all Replication Groups are finished processing
+	// Create a WaitGroup to prevent early application termination until all Replication Groups are finished processing, then start concurrent RG processing
 	var wg sync.WaitGroup
-
-	// Start concurrent processing for each Replication Group
-	for _, rgConfig := range config.ReplicationGroups { // range outputs the index of the current element (ignored) and the element itself
+	for _, rgConfig := range config.ReplicationGroups { // range on a slice outputs the index of the current element (ignored) and the element itself
 		wg.Add(1) // increment the WaitGroup by 1 for each ReplicationGroup
-		go processReplicationGroup(rgConfig, &wg)
+		go processReplicationGroup(rgConfig, &wg, opsChannel)
 	}
 
 	// Block return of the main function until all required goroutines complete
