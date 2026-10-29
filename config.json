@@ -1,8 +1,14 @@
 {
+    "Metadata": {
+        "Description": [
+            "This description field is ignored by file-replicator and can be used to write context for operators."
+        ]
+    },
     "ReplicationGroups": [
         {
             "Name": "My Files",
             "FileIndex": "my_files_index.csv",
+            "ConflictAction": "ask",
             "Directories": [
                 "C:\\My Files"
             ]

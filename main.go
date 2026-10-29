@@ -11,6 +11,10 @@ import (
 	"sync"
 )
 
+type Metadata struct {
+	Description []string // a description of the configuration file that is ignored by the application
+}
+
 type ReplicationGroup struct {
 	Name        string   // name of the Replication Group
 	FileIndex   string   // name of the CSV file that holds the file index
@@ -19,20 +23,42 @@ type ReplicationGroup struct {
 
 // The structure of this struct must match the JSON structure of the config file
 type Config struct {
+	Metadata          Metadata
 	ReplicationGroups []ReplicationGroup
 }
 
-// Parse the configuration file, returning the config as an object
+// Helper function to check if an element is in a slice for any of the comparable types
+func contains[T comparable](s []T, e T) bool {
+	for _, i := range s {
+		if i == e {
+			return true
+		}
+	}
+	return false
+}
+
+// Parse the configuration file and validate its contents, returning the config as an object
 func parseConfig(configFile string) (Config, error) {
+	// Read the configuration file from disk
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return Config{}, err
 	}
 
+	// Parse the configuration file into the Config object type
 	var config Config
 	err = json.Unmarshal(data, &config)
 	if err != nil {
 		return Config{}, fmt.Errorf("Failed to parse config: %w", err)
+	}
+
+	// Validate that there are no duplicate Replication Group names
+	var replicationGroupNames []string
+	for _, r := range config.ReplicationGroups {
+		if contains(replicationGroupNames, r.Name) {
+			return Config{}, fmt.Errorf("Replication Group name '%s' in %s is not unique", r.Name, configFile)
+		}
+		replicationGroupNames = append(replicationGroupNames, r.Name)
 	}
 
 	return config, nil
@@ -81,15 +107,15 @@ func getFileHash(filepath string) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
-// The fileCoordinator function allocates file permissions to each processReplicationGroup goroutine to ensure goroutines do not collide trying to process the same file
-func fileCoordinator() {
+// The fileController function allocates file permissions to each processReplicationGroup goroutine to ensure goroutines do not collide trying to process the same file
+func fileController() {
 
 }
 
 // This is the root function that handles the processing for a specific Replication Group, and it is called as a goroutine
 // Each Replication Group is handled by exactly one processReplicationGroup goroutine, and each goroutine processes only one Replication Group
 // Each instance of this function is responsible for its own downstream processing (error handling, reporting, etc)
-// The fileCoordinator function coordinates access to files among the processReplicationGroup goroutines
+// The fileController function coordinates access to files among the processReplicationGroup goroutines
 func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup) {
 	// Decrement the WaitGroup task counter by 1 when the processReplicationGroup function returns
 	defer wg.Done()
@@ -122,7 +148,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Start the fileCoordinator goroutine
+	// Start the fileController goroutine
 
 	// Create a WaitGroup to prevent early application termination until all Replication Groups are finished processing
 	var wg sync.WaitGroup
