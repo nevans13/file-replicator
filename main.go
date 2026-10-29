@@ -24,6 +24,7 @@ type ReplicationGroup struct {
 // The structure of this struct must match the JSON structure of the config file
 type Config struct {
 	Metadata          Metadata
+	Debug             bool // whether or not to generate debugging output
 	ReplicationGroups []ReplicationGroup
 }
 
@@ -201,6 +202,14 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 }
 
 func main() {
+	// Startup output
+	currentDirectory, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Starting file-replicator")
+	fmt.Printf("Currently running in directory %s", currentDirectory)
+
 	// Config file is loaded on startup and can be rechecked by relaunching the application
 	// Default to config.json in the root directory
 	config, err := parseConfig("config.json")

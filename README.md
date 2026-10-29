@@ -22,6 +22,7 @@ Build the executable (Windows example below):
 ## Config File Spec
 The config file includes the following fields (all must be present for the file to be valid; reference the committed *config.json* for the structure):
 - **Metadata / Description**: this description field is ignored by file-replicator and can be used to write context for users
+- **Debug**: whether or not to generate debugging output (log files and console output)
 - **ReplicationGroups**: one or more Replication Groups (RGs), an independent set of directories that maintain the same relative structure
 - **ReplicationGroups / Name**: a friendly name of the Replication Group (must be unique among the configured RGs)
 - **ReplicationGroups / FileIndex**: path to the CSV file that hold the file index for this Replication Group (must be unique among the configured RGs)

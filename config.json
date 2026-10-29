@@ -4,6 +4,7 @@
             "This description field is ignored by file-replicator and can be used to write context for users."
         ]
     },
+    "Debug": false,
     "ReplicationGroups": [
         {
             "Name": "My Files",
