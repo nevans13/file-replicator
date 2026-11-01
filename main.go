@@ -16,9 +16,11 @@ type Metadata struct {
 }
 
 type ReplicationGroup struct {
-	Name        string   // name of the Replication Group
-	FileIndex   string   // name of the CSV file that holds the file index
-	Directories []string // one or more directories to include in the Replication Group's context
+	Name            string   // name of the Replication Group
+	FileIndex       string   // name of the CSV file that holds the file index
+	ConflictAction  string   // action to take for version conflicts
+	DisplayFileDiff string   // settings for displaying the diff for supported file types
+	Directories     []string // one or more directories to include in the Replication Group's context
 }
 
 // The structure of this struct must match the JSON structure of the config file

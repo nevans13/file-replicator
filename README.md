@@ -6,6 +6,12 @@ Note: this application is in active development, comes with no guarantees (expre
 ## Architecture
 This system relies on one or more configured Replication Groups (RGs), an independent set of directories that maintain the same relative structure, allowing you to version and replicate different subsets of file systems with different policies. File operations (CRUD) are coordinated to prevent collisions during processing.
 
+These file types are supported for advanced features (such as file diff):
+- .json
+- .md
+- .txt
+- .yaml
+
 ## Instructions
 Build the executable (Windows example below):
 ```
@@ -26,5 +32,6 @@ The config file includes the following fields (all must be present for the file 
 - **ReplicationGroups**: one or more Replication Groups (RGs), an independent set of directories that maintain the same relative structure
 - **ReplicationGroups / Name**: a friendly name of the Replication Group (must be unique among the configured RGs)
 - **ReplicationGroups / FileIndex**: path to the CSV file that hold the file index for this Replication Group (must be unique among the configured RGs)
-- **ReplicationGroups / ConflictAction**: when a version conflict occurs ; valid options are *ask* (user is prompted for input) and *replicateNewest* (the newest version of the file is automatically replicated to the other directories)
+- **ReplicationGroups / ConflictAction**: when a version conflict occurs, this setting determines how to resolve it; valid options are *replicateNewest* (the newest version of the file is automatically replicated to the other directories), *never* (the application is read-only), and *ask* (user is given the option per-conflict)
+- **ReplicationGroups / DisplayFileDiff**: when a version conflict occurs, this settings determins if/how to show the differences between the files; valid options are *automatic* (the diff is displayed by default), *never* (the diff feature is not available), and *ask* (user is given the option per-conflict)
 - **ReplicationGroups / Directories**: an array of directories to include in scope for replication; if only one Replication Group with only one Directory is specified, the application will index, and optionally version, the files in that Directory
