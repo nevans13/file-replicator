@@ -6,6 +6,8 @@ Note: this application is in active development, comes with no guarantees (expre
 ## Architecture
 This system relies on one or more configured Replication Groups (RGs), an independent set of directories that maintain the same relative structure, allowing you to version and replicate different subsets of file systems with different policies. File operations (CRUD and hash) are coordinated to prevent collisions during processing.
 
+The File Index holds an inventory of every file and all existing versions of that file in the Replication Group. The index represents the last-known , and running file-replicator will re-align the index with the current state of the configured directories. The latest version of the file is always stored with the file name set by the user; previous versions are stored in the *.versions* directory and named *{filename}_frv{version#}.{extension}* (for example, MyFile_frv2.txt). Once a file is versioned, it should not be edited further.
+
 These file types are supported for advanced features (such as file diff):
 - .json
 - .md
@@ -22,7 +24,7 @@ Build the executable (Windows example below):
 - [ ] Monitor for changes in files (using hash)
 - [ ] Replicate files between devices (internal hard drives, external hard drives, flash drives, cloud filesystems, etc)
 - [ ] Save and index previous versions of files
-- [ ] For supported formats, provide a file diff between versions (start with .txt)
+- [ ] For supported formats, provide a file diff between versions
 - [ ] Monitor disk space and health
 
 ## Config File Spec

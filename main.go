@@ -87,6 +87,36 @@ func parseConfig(configFile string) (Config, error) {
 	return config, nil
 }
 
+// Given the path to the File Index, return a structured list of files and their metadata
+func parseFileIndex(f string) ([][]string, error) {
+	// Attempt to load the File Index for this Replication Group
+	fileIndex, err := os.Open(f)
+	if err != nil {
+		// Create the index and open it if it is not present, otherwise fail
+		var pathError *fs.PathError
+		if errors.As(err, &pathError) {
+			// Create the file index, using the declared fileIndex variable from the original open attempt
+			fileIndex, err = os.Create(f)
+			if err != nil {
+				return [][]string{}, err
+			}
+
+			// Write the CSV header to the file
+			n, err := fileIndex.Write([]byte("filename,hash,version"))
+			if err != nil || n == 0 {
+				return [][]string{}, fmt.Errorf("Could not write fileIndex header: %e", err)
+			}
+		} else {
+			// Fail if the error from the attempted file open was not a PathError
+			return [][]string{}, err
+		}
+	}
+
+	defer fileIndex.Close()
+
+	return [][]string{}, nil
+}
+
 // Get the full filepaths for every file in the configured directories, appending them to the provided slice
 // Called recursively to iterate over all sub-directories
 // Fuction takes a pointer to the filepaths slice (declared in main function) and the target directory (full path) to iterate over
@@ -167,32 +197,18 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 	// Decrement the WaitGroup task counter by 1 when the processReplicationGroup function returns
 	defer wg.Done()
 
-	// Attempt to load the File Index for this Replication Group
-	fileIndex, err := os.Open(rgConfig.FileIndex)
-	if err != nil {
-		// Create the index and open it if it is not present, otherwise fail
-		var pathError *fs.PathError
-		if errors.As(err, &pathError) {
-			fileIndex, err = os.Create(rgConfig.FileIndex) // uses fileIndex from the original open attempt
-			if err != nil {
-				log.Fatal(err)
-			}
-		} else {
-			log.Fatal(err)
-		}
-	}
-
-	fmt.Println(fileIndex.Name()) // TEMPORARY
-
 	// filepaths holds the full path of every file identified in the first of the configured directories.
 	// For best performance, the first listed directory in the RG config should be the one with the most churn (the "working" storage device).
 	var filepaths []string
 
 	// Add all individual files in the directory to the filepaths array
-	err = getFiles(&filepaths, rgConfig.Directories[0])
+	err := getFiles(&filepaths, rgConfig.Directories[0])
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Parse the File Index into the list of files and their metadata
+	_, _ = parseFileIndex(rgConfig.FileIndex)
 
 	// Iterate over every file, applying Replication Group policy to it
 
