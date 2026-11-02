@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -90,7 +91,7 @@ func parseConfig(configFile string) (Config, error) {
 // Given the path to the File Index, return a structured list of files and their metadata
 func parseFileIndex(f string) ([][]string, error) {
 	// Define the target header row of the File Index CSV
-	const headerRow string = "filename,hash,version\n"
+	const headerRow string = "filename,hash,version"
 
 	// Attempt to load the File Index for this Replication Group
 	fileIndex, err := os.Open(f)
@@ -105,7 +106,7 @@ func parseFileIndex(f string) ([][]string, error) {
 			}
 
 			// Write the CSV header to the file
-			n, err := fileIndex.Write([]byte(headerRow))
+			n, err := fileIndex.Write([]byte(headerRow + "\n"))
 			if err != nil || n == 0 {
 				return [][]string{}, fmt.Errorf("Could not write fileIndex header: %e", err)
 			}
@@ -118,24 +119,52 @@ func parseFileIndex(f string) ([][]string, error) {
 		}
 	}
 
-	// At this point, we have an open File Index; defer the file close before proceeding
+	// At this point, we have an open File Index with no read/write offset; defer the file close before proceeding
 	defer fileIndex.Close()
 
-	// Read the contents of the File Index into fileIndexContents, then convert to a string as fileIndexContentsString
-	var fileIndexContents []byte = make([]byte, len(headerRow))
-	_, err = fileIndex.Read(fileIndexContents)
-	if err != nil {
-		return [][]string{}, fmt.Errorf("Could not read fileIndex file: %e", err)
+	// Read the contents of the File Index into fileIndexContents and store as a string in fileIndexContentsString
+	var fileIndexContents []byte = make([]byte, 1024) // read the file index in 1024-byte chunks
+	var fileIndexContentsString string
+	for {
+		// Read the next chunk of data from the file
+		_, err := fileIndex.Read(fileIndexContents)
+		if err != nil && err == io.EOF {
+			// This section is hit when there are no bytes to be read from the file
+			// If there are <1024 bytes (the []byte buffer is not filled), then that content is still read without error
+			break
+		} else if err != nil && err != io.EOF {
+			return [][]string{}, fmt.Errorf("Could not read fileIndex file: %e", err)
+		} else {
+			fileIndexContentsString += string(fileIndexContents)
+		}
 	}
 
-	var fileIndexHeader string = string(fileIndexContents)
-
-	// Validate the header row is present
-	if fileIndexHeader != headerRow {
-		return [][]string{}, fmt.Errorf("File Index %s header row '%s' is not valid", f, fileIndexHeader)
+	// Validate the header row is present and matches expected content
+	if strings.Split(fileIndexContentsString, "\n")[0] != headerRow {
+		return [][]string{}, fmt.Errorf("File Index %s header row '%s' is not valid", f, strings.Split(fileIndexContentsString, "\n")[0])
 	}
 
-	return [][]string{}, nil
+	// Iterate over each row in the CSV, storing the fields into the fileIndexStructured multidimensional array
+	var fileIndexStructured [][]string
+	for _, r := range strings.Split(fileIndexContentsString, "\n")[1:] { // strings.Split removes the newlines during the split, so no trim is needed
+		// Ignore blank lines
+		if r == "" {
+			continue
+		}
+
+		// Split the row to get each element
+		var e []string = strings.Split(r, ",")
+
+		// Verify the number of elements matches the file structure (derived from the header)
+		if len(e) != len(strings.Split(headerRow, ",")) {
+			return [][]string{}, fmt.Errorf("File Index row '%s' is not valid", r)
+		}
+
+		// Append that slice of elements to the fileIndexStructured multidimensional array
+		fileIndexStructured = append(fileIndexStructured, e)
+	}
+
+	return fileIndexStructured, nil
 }
 
 // Get the full filepaths for every file in the configured directories, appending them to the provided slice
@@ -228,7 +257,7 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 		log.Fatal(err)
 	}
 
-	// Parse the File Index into the list of files and their metadata
+	// Parse the File Index into the list of files and their metadata (multidimensional array)
 	_, err = parseFileIndex(rgConfig.FileIndex)
 	if err != nil {
 		log.Fatal(err)
