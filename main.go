@@ -89,6 +89,9 @@ func parseConfig(configFile string) (Config, error) {
 
 // Given the path to the File Index, return a structured list of files and their metadata
 func parseFileIndex(f string) ([][]string, error) {
+	// Define the target header row of the File Index CSV
+	const headerRow string = "filename,hash,version\n"
+
 	// Attempt to load the File Index for this Replication Group
 	fileIndex, err := os.Open(f)
 	if err != nil {
@@ -102,17 +105,35 @@ func parseFileIndex(f string) ([][]string, error) {
 			}
 
 			// Write the CSV header to the file
-			n, err := fileIndex.Write([]byte("filename,hash,version"))
+			n, err := fileIndex.Write([]byte(headerRow))
 			if err != nil || n == 0 {
 				return [][]string{}, fmt.Errorf("Could not write fileIndex header: %e", err)
 			}
+
+			// Reset the cursor position to the beginning of the file for the subsequent read
+			fileIndex.Seek(0, io.SeekStart)
 		} else {
 			// Fail if the error from the attempted file open was not a PathError
 			return [][]string{}, err
 		}
 	}
 
+	// At this point, we have an open File Index; defer the file close before proceeding
 	defer fileIndex.Close()
+
+	// Read the contents of the File Index into fileIndexContents, then convert to a string as fileIndexContentsString
+	var fileIndexContents []byte = make([]byte, len(headerRow))
+	_, err = fileIndex.Read(fileIndexContents)
+	if err != nil {
+		return [][]string{}, fmt.Errorf("Could not read fileIndex file: %e", err)
+	}
+
+	var fileIndexHeader string = string(fileIndexContents)
+
+	// Validate the header row is present
+	if fileIndexHeader != headerRow {
+		return [][]string{}, fmt.Errorf("File Index %s header row '%s' is not valid", f, fileIndexHeader)
+	}
 
 	return [][]string{}, nil
 }
@@ -177,7 +198,7 @@ func fileController(opsChannel chan FileOperation) {
 		case "hash":
 			hash, err := getFileHash(op.Filepath)
 			op.Result <- hash
-			op.Error <- err
+			op.Error <- err // if successful, getFileHash returns a nil error, so fileController sets the error channel to nil
 
 		// Error if an invalid file operation is specified
 		default:
@@ -208,12 +229,13 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 	}
 
 	// Parse the File Index into the list of files and their metadata
-	_, _ = parseFileIndex(rgConfig.FileIndex)
+	_, err = parseFileIndex(rgConfig.FileIndex)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Iterate over every file, applying Replication Group policy to it
-
-	// Temp testing of hashes
-	for _, h := range filepaths {
+	for _, f := range filepaths {
 		// Create error and result channels to receive output from the opsChannel
 		// These channels are made new each iteration of the loop, and the old ones are marked for garbage collection
 		errorChannel := make(chan error, 1)
@@ -223,7 +245,7 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 		// processReplicationGroup blocks here until fileController receives the operation
 		opsChannel <- FileOperation{
 			Operation: "hash",
-			Filepath:  h,
+			Filepath:  f,
 			Result:    resultChannel,
 			Error:     errorChannel,
 		}
@@ -231,14 +253,14 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 		// processReplicationGroup then blocks here until fileController writes to the error channel (processing is complete)
 		err := <-errorChannel
 		if err != nil {
-			log.Printf("Hash error for %s: %v", h, err)
+			log.Printf("Hash error for %s: %v", f, err)
 			continue
 		}
 
+		// If the error channel is nil, then the hash can be found in the result channel
 		var hash = <-resultChannel
-		fmt.Println(h)
-		fmt.Println(hash)
-		fmt.Println()
+
+		fmt.Println(hash) // TEMPORARY
 	}
 }
 
