@@ -3,8 +3,10 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -154,24 +156,45 @@ func fileController(opsChannel chan FileOperation) {
 	}
 }
 
-// This is the root function that handles the processing for a specific Replication Group, and it is called as a goroutine
-// Each Replication Group is handled by exactly one processReplicationGroup goroutine, and each goroutine processes only one Replication Group
-// Each instance of this function is responsible for its own downstream processing (error handling, reporting, user interaction, etc)
-// The fileController function coordinates access to files among the processReplicationGroup goroutines, and communication is handled by the opsChannel
+// This is the root function that handles the processing for a specific Replication Group, and it is called as a goroutine.
+// Each Replication Group is handled by exactly one processReplicationGroup goroutine, and each goroutine processes only one Replication Group.
+// Each instance of this function is responsible for its own downstream processing (error handling, reporting, user interaction, etc).
+// This function will complete these tasks, then return:
+// 1) Iterate over the "filepaths" slice and evaluate each file in the first of the directories in the RG
+// 2) Interate through each of the other directories in the RG, handling any files present that were not present in the initial loop (step 1)
+// The fileController function coordinates access to files among the processReplicationGroup goroutines, and communication is handled by the opsChannel.
 func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsChannel chan FileOperation) {
 	// Decrement the WaitGroup task counter by 1 when the processReplicationGroup function returns
 	defer wg.Done()
 
-	// filepaths holds the full path of every file identified in the configured directories
-	var filepaths []string
-
-	// Add all individual files in the directory to the filepaths array
-	for _, d := range rgConfig.Directories {
-		err := getFiles(&filepaths, d)
-		if err != nil {
+	// Attempt to load the File Index for this Replication Group
+	fileIndex, err := os.Open(rgConfig.FileIndex)
+	if err != nil {
+		// Create the index and open it if it is not present, otherwise fail
+		var pathError *fs.PathError
+		if errors.As(err, &pathError) {
+			fileIndex, err = os.Create(rgConfig.FileIndex) // uses fileIndex from the original open attempt
+			if err != nil {
+				log.Fatal(err)
+			}
+		} else {
 			log.Fatal(err)
 		}
 	}
+
+	fmt.Println(fileIndex.Name()) // TEMPORARY
+
+	// filepaths holds the full path of every file identified in the first of the configured directories.
+	// For best performance, the first listed directory in the RG config should be the one with the most churn (the "working" storage device).
+	var filepaths []string
+
+	// Add all individual files in the directory to the filepaths array
+	err = getFiles(&filepaths, rgConfig.Directories[0])
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Iterate over every file, applying Replication Group policy to it
 
 	// Temp testing of hashes
 	for _, h := range filepaths {

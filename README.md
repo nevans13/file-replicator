@@ -4,7 +4,7 @@ A lightweight utility for versioning and replicating files between storage devic
 Note: this application is in active development, comes with no guarantees (express or implied), and should not be considered fit for critical workloads
 
 ## Architecture
-This system relies on one or more configured Replication Groups (RGs), an independent set of directories that maintain the same relative structure, allowing you to version and replicate different subsets of file systems with different policies. File operations (CRUD) are coordinated to prevent collisions during processing.
+This system relies on one or more configured Replication Groups (RGs), an independent set of directories that maintain the same relative structure, allowing you to version and replicate different subsets of file systems with different policies. File operations (CRUD and hash) are coordinated to prevent collisions during processing.
 
 These file types are supported for advanced features (such as file diff):
 - .json
