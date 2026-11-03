@@ -127,7 +127,7 @@ func parseFileIndex(f string) ([][]string, error) {
 	var fileIndexContentsString string
 	for {
 		// Read the next chunk of data from the file
-		_, err := fileIndex.Read(fileIndexContents)
+		n, err := fileIndex.Read(fileIndexContents)
 		if err != nil && err == io.EOF {
 			// This section is hit when there are no bytes to be read from the file
 			// If there are <1024 bytes (the []byte buffer is not filled), then that content is still read without error
@@ -135,9 +135,12 @@ func parseFileIndex(f string) ([][]string, error) {
 		} else if err != nil && err != io.EOF {
 			return [][]string{}, fmt.Errorf("Could not read fileIndex file: %e", err)
 		} else {
-			fileIndexContentsString += string(fileIndexContents)
+			fileIndexContentsString += string(fileIndexContents[:n]) // only append the number of bytes read (n) to the string to avoid padding up to 1024 bytes
 		}
 	}
+
+	// Trim any trailing newlines
+	fileIndexContentsString = strings.Trim(fileIndexContentsString, "\n")
 
 	// Validate the header row is present and matches expected content
 	if strings.Split(fileIndexContentsString, "\n")[0] != headerRow {
@@ -147,11 +150,6 @@ func parseFileIndex(f string) ([][]string, error) {
 	// Iterate over each row in the CSV, storing the fields into the fileIndexStructured multidimensional array
 	var fileIndexStructured [][]string
 	for _, r := range strings.Split(fileIndexContentsString, "\n")[1:] { // strings.Split removes the newlines during the split, so no trim is needed
-		// Ignore blank lines
-		if r == "" {
-			continue
-		}
-
 		// Split the row to get each element
 		var e []string = strings.Split(r, ",")
 
@@ -263,13 +261,13 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 		log.Fatal(err)
 	}
 
+	// Create error and result channels to receive output from the opsChannel
+	// These channels are reused for all file operations
+	var errorChannel chan error = make(chan error, 1)
+	var resultChannel chan interface{} = make(chan interface{}, 1)
+
 	// Iterate over every file, applying Replication Group policy to it
 	for _, f := range filepaths {
-		// Create error and result channels to receive output from the opsChannel
-		// These channels are made new each iteration of the loop, and the old ones are marked for garbage collection
-		errorChannel := make(chan error, 1)
-		resultChannel := make(chan interface{}, 1)
-
 		// Send the file hash request to the opsChannel for processing by fileController
 		// processReplicationGroup blocks here until fileController receives the operation
 		opsChannel <- FileOperation{
