@@ -9,7 +9,9 @@
         {
             "Name": "My Files",
             "FileIndex": "my_files_index.csv",
-            "ConflictAction": "ask",
+            "HashConflictAction": "ask",
+            "VersionConflictAction": "updateFileIndex",
+            "MissingFileAction": "ask",
             "DisplayFileDiff": "ask",
             "Directories": [
                 "C:\\My Files",

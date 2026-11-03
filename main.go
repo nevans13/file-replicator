@@ -14,16 +14,20 @@ import (
 	"sync"
 )
 
+// The Metadata fields from the config file
 type Metadata struct {
 	Description []string // a description of the configuration file that is ignored by the application
 }
 
+// The elements of a single Replication Group configuration
 type ReplicationGroup struct {
-	Name            string   // name of the Replication Group
-	FileIndex       string   // name of the CSV file that holds the file index
-	ConflictAction  string   // action to take for version conflicts
-	DisplayFileDiff string   // settings for displaying the diff for supported file types
-	Directories     []string // one or more directories to include in the Replication Group's context
+	Name                  string   // name of the Replication Group
+	FileIndex             string   // name of the CSV file that holds the file index
+	HashConflictAction    string   // action to take for hash conflicts among files
+	VersionConflictAction string   // action to take for conflicts between the file hash and its latest version hash in the File Index
+	MissingFileAction     string   // action to take if a file exists in one or more directories and is missing in one or more other directories
+	DisplayFileDiff       string   // settings for displaying the diff for supported file types
+	Directories           []string // one or more directories to include in the Replication Group's context
 }
 
 // The structure of this struct must match the JSON structure of the config file
@@ -43,13 +47,25 @@ type FileOperation struct {
 }
 
 // Helper function to check if an element is in a slice for any of the comparable types
-func contains[T comparable](s []T, e T) bool {
+func sliceContains[T comparable](s []T, e T) bool {
 	for _, i := range s {
 		if i == e {
 			return true
 		}
 	}
 	return false
+}
+
+// Helper function to check if all elements in a slice are equal for any of the comparable types
+func sliceElementsEqual[T comparable](s []T) bool {
+	for _, i1 := range s {
+		for _, i2 := range s {
+			if i1 != i2 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Parse the configuration file and validate its contents, returning the config as an object
@@ -70,7 +86,7 @@ func parseConfig(configFile string) (Config, error) {
 	// Validate that there are no duplicate Replication Group names
 	var replicationGroupNames []string
 	for _, r := range config.ReplicationGroups {
-		if contains(replicationGroupNames, r.Name) {
+		if sliceContains(replicationGroupNames, r.Name) {
 			return Config{}, fmt.Errorf("Replication Group name '%s' in %s is not unique", r.Name, configFile)
 		}
 		replicationGroupNames = append(replicationGroupNames, r.Name)
@@ -79,7 +95,7 @@ func parseConfig(configFile string) (Config, error) {
 	// Validate that there are no duplicate Replication Group file indexes
 	var replicationGroupFileIndexes []string
 	for _, r := range config.ReplicationGroups {
-		if contains(replicationGroupFileIndexes, r.FileIndex) {
+		if sliceContains(replicationGroupFileIndexes, r.FileIndex) {
 			return Config{}, fmt.Errorf("Replication Group file index '%s' in %s is not unique", r.FileIndex, configFile)
 		}
 		replicationGroupFileIndexes = append(replicationGroupFileIndexes, r.FileIndex)
@@ -91,7 +107,7 @@ func parseConfig(configFile string) (Config, error) {
 // Given the path to the File Index, return a structured list of files and their metadata
 func parseFileIndex(f string) ([][]string, error) {
 	// Define the target header row of the File Index CSV
-	const headerRow string = "filename,hash,version"
+	const headerRow string = "filepath,hash,version"
 
 	// Attempt to load the File Index for this Replication Group
 	fileIndex, err := os.Open(f)
@@ -239,7 +255,7 @@ func fileController(opsChannel chan FileOperation) {
 // Each instance of this function is responsible for its own downstream processing (error handling, reporting, user interaction, etc).
 // This function will complete these tasks, then return:
 // 1) Iterate over the "filepaths" slice and evaluate each file in the first of the directories in the RG
-// 2) Interate through each of the other directories in the RG, handling any files present that were not present in the initial loop (step 1)
+// 2) Interate through each of the other directories in the RG, handling any files present that were not present in the initial loop (Step 1)
 // The fileController function coordinates access to files among the processReplicationGroup goroutines, and communication is handled by the opsChannel.
 func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsChannel chan FileOperation) {
 	// Decrement the WaitGroup task counter by 1 when the processReplicationGroup function returns
@@ -266,11 +282,14 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 	var errorChannel chan error = make(chan error, 1)
 	var resultChannel chan interface{} = make(chan interface{}, 1)
 
-	// Iterate over every file, applying Replication Group policy to it by performing the following steps:
-	// 1) Collect the locations of all instances of the file based on its relative path
+	// Iterate over every file in the first directory, applying Replication Group policy to it by performing the following steps:
+	// a) Collect the locations of all instances of the file in the directories (including the first directory) based on its relative path
+	// b) Check for and handle any hash conflicts among the files
+	// c) Handle updates to the file index
+	// d) Resolve any missing files
 	for _, f := range filepaths {
-		// fileInstances holds just the instances of this current file
-		var fileInstances []string = make([]string, 0)
+		// Step 2a - collect locations of all instances of target file "f"
+		var fileInstances []string = make([]string, 0) // fileInstances holds just the instances of this current file
 
 		// Get the name and relative path of the current file (without the root directory path or file name)
 		var fileName string = strings.Split(f, "\\")[len((strings.Split(f, "\\")))-1]
@@ -293,26 +312,36 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 			}
 		}
 
-		// Send the file hash request to the opsChannel for processing by fileController
-		// processReplicationGroup blocks here until fileController receives the operation
-		opsChannel <- FileOperation{
-			Operation: "hash",
-			Filepath:  f,
-			Result:    resultChannel,
-			Error:     errorChannel,
+		// Step 2b - check for and handle any hash conflicts among the files
+		var fileHashes []string = make([]string, 0) // fileInstances holds the hashes of the file instances
+		for _, i := range fileInstances {
+			// Send the file hash request to the opsChannel for processing by fileController
+			// processReplicationGroup blocks here until fileController receives the operation
+			opsChannel <- FileOperation{
+				Operation: "hash",
+				Filepath:  i,
+				Result:    resultChannel,
+				Error:     errorChannel,
+			}
+
+			// processReplicationGroup then blocks here until fileController writes to the error channel (processing is complete)
+			err := <-errorChannel
+			if err != nil {
+				log.Printf("Hash error for %s: %v", f, err)
+				continue
+			}
+
+			// If the error channel is nil, then the hash can be found in the result channel; append to the fileHashes slice
+			var hash = <-resultChannel
+			fileHashes = append(fileHashes, hash.(string)) // ".(string)" performs a type assertion of the interface to a string
 		}
 
-		// processReplicationGroup then blocks here until fileController writes to the error channel (processing is complete)
-		err := <-errorChannel
-		if err != nil {
-			log.Printf("Hash error for %s: %v", f, err)
+		// If at least one of the files is different from the others, process the conflict(s) before proceeding
+		if !sliceElementsEqual(fileHashes) {
 			continue
 		}
 
-		// If the error channel is nil, then the hash can be found in the result channel
-		var hash = <-resultChannel
-
-		fmt.Println(hash) // TEMPORARY
+		//
 	}
 }
 
