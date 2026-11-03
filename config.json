@@ -12,7 +12,9 @@
             "ConflictAction": "ask",
             "DisplayFileDiff": "ask",
             "Directories": [
-                "C:\\My Files"
+                "C:\\My Files",
+                "C:\\Nested Directory\\My More Files",
+                "C:\\Nested Directory\\Third Test Directory"
             ]
         }
     ]

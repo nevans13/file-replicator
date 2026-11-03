@@ -167,16 +167,16 @@ func parseFileIndex(f string) ([][]string, error) {
 
 // Get the full filepaths for every file in the configured directories, appending them to the provided slice
 // Called recursively to iterate over all sub-directories
-// Fuction takes a pointer to the filepaths slice (declared in main function) and the target directory (full path) to iterate over
-func getFiles(filepaths *[]string, directory string) error {
+// Fuction takes a pointer to the filepaths slice (declared in main()), the target directory (full path), and whether to recurse through subdirectories
+func getFiles(filepaths *[]string, directory string, recursive bool) error {
 	files, err := os.ReadDir(directory)
 	if err != nil {
 		return err
 	}
 
 	for _, f := range files {
-		if f.IsDir() {
-			err = getFiles(filepaths, filepath.Join(directory, f.Name())) // recursive call with the filepaths pointer
+		if recursive && f.IsDir() {
+			err = getFiles(filepaths, filepath.Join(directory, f.Name()), recursive) // recursive call with the filepaths pointer
 			if err != nil {
 				return err
 			}
@@ -250,7 +250,7 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 	var filepaths []string
 
 	// Add all individual files in the directory to the filepaths array
-	err := getFiles(&filepaths, rgConfig.Directories[0])
+	err := getFiles(&filepaths, rgConfig.Directories[0], true)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -266,8 +266,33 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 	var errorChannel chan error = make(chan error, 1)
 	var resultChannel chan interface{} = make(chan interface{}, 1)
 
-	// Iterate over every file, applying Replication Group policy to it
+	// Iterate over every file, applying Replication Group policy to it by performing the following steps:
+	// 1) Collect the locations of all instances of the file based on its relative path
 	for _, f := range filepaths {
+		// fileInstances holds just the instances of this current file
+		var fileInstances []string = make([]string, 0)
+
+		// Get the name and relative path of the current file (without the root directory path or file name)
+		var fileName string = strings.Split(f, "\\")[len((strings.Split(f, "\\")))-1]
+		var relativePath string = strings.Split(filepath.Dir(f), rgConfig.Directories[0])[1] + "\\"
+
+		// Determine if any other instances of this file exist in the other configured RG directories
+		for _, d := range rgConfig.Directories {
+			var directoryFiles []string = make([]string, 0) // directoryFiles holds every file found in the same directory as the current file
+			var searchDirectory string = d + relativePath   // the subdirectory within the current RG directory to search
+			err = getFiles(&directoryFiles, searchDirectory, false)
+
+			// Check for a matching file in the directory
+			for _, e := range directoryFiles {
+				// If there is a matching instance of the file, it will be at the same relative location in the different root directory
+				var expectedFile string = d + relativePath + fileName
+				if e == expectedFile {
+					fileInstances = append(fileInstances, e)
+					break // file has been found, so break iteration through remaining files
+				}
+			}
+		}
+
 		// Send the file hash request to the opsChannel for processing by fileController
 		// processReplicationGroup blocks here until fileController receives the operation
 		opsChannel <- FileOperation{
