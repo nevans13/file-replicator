@@ -10,7 +10,7 @@
             "Name": "My Files",
             "FileIndex": "my_files_index.csv",
             "HashConflictAction": "ask",
-            "VersionConflictAction": "updateFileIndex",
+            "VersionConflictAction": "ask",
             "MissingFileAction": "ask",
             "DisplayFileDiff": "ask",
             "Directories": [

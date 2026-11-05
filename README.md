@@ -26,6 +26,7 @@ Build the executable (Windows example below):
 - [ ] Save and index previous versions of files
 - [ ] For supported formats, provide a file diff for conflicts
 - [ ] Monitor disk space and health
+- [ ] Split helper functions out into their own module
 
 ## Config File Spec
 The config file includes the following fields (all must be present for the file to be valid; reference the committed *config.json* for the structure):

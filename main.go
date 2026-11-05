@@ -255,7 +255,8 @@ func fileController(opsChannel chan FileOperation) {
 // Each instance of this function is responsible for its own downstream processing (error handling, reporting, user interaction, etc).
 // This function will complete these tasks, then return:
 // 1) Iterate over the "filepaths" slice and evaluate each file in the first of the directories in the RG
-// 2) Interate through each of the other directories in the RG, handling any files present that were not present in the initial loop (Step 1)
+// 2) Iterate through each of the other directories in the RG, handling any files present that were not present in the initial loop (Step 1)
+// 3) Rewrite the File Index file with the changes to the fileIndex multidimensional array
 // The fileController function coordinates access to files among the processReplicationGroup goroutines, and communication is handled by the opsChannel.
 func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsChannel chan FileOperation) {
 	// Decrement the WaitGroup task counter by 1 when the processReplicationGroup function returns
@@ -272,7 +273,7 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 	}
 
 	// Parse the File Index into the list of files and their metadata (multidimensional array)
-	_, err = parseFileIndex(rgConfig.FileIndex)
+	fileIndex, err := parseFileIndex(rgConfig.FileIndex)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -285,10 +286,10 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 	// Iterate over every file in the first directory, applying Replication Group policy to it by performing the following steps:
 	// a) Collect the locations of all instances of the file in the directories (including the first directory) based on its relative path
 	// b) Check for and handle any hash conflicts among the files
-	// c) Handle updates to the file index
+	// c) Handle updates to the file index multidimensional array
 	// d) Resolve any missing files
 	for _, f := range filepaths {
-		// Step 2a - collect locations of all instances of target file "f"
+		// Step 1a - collect locations of all instances of target file "f"
 		var fileInstances []string = make([]string, 0) // fileInstances holds just the instances of this current file
 
 		// Get the name and relative path of the current file (without the root directory path or file name)
@@ -312,7 +313,7 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 			}
 		}
 
-		// Step 2b - check for and handle any hash conflicts among the files
+		// Step 1b - check for and handle any hash conflicts among the files
 		var fileHashes []string = make([]string, 0) // fileInstances holds the hashes of the file instances
 		for _, i := range fileInstances {
 			// Send the file hash request to the opsChannel for processing by fileController
@@ -338,21 +339,88 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 
 		// If at least one of the files is different from the others, process the conflict(s) before proceeding
 		if !sliceElementsEqual(fileHashes) {
-			continue
+			// NEEDS DEVELOPMENT
 		}
 
-		//
+		// Step 1c - update File Index
+		// Iterate of the file index to get the entry for the current file
+		var matchFound bool = false
+		for ne, e := range fileIndex {
+			if e[0] == relativePath+fileName && e[2] == "latest" {
+				// If file and file index hashes do not match, act based on the VersionConflictAction
+				// The fileHashes slice remains current with the state of the filesystem, so upon reaching this step, file hashes should all be equal
+				if e[1] != fileHashes[0] {
+					if rgConfig.VersionConflictAction == "updateFileIndex" {
+						fileIndex[ne][1] = fileHashes[0]
+					} else if rgConfig.VersionConflictAction == "ask" {
+						var input string
+						fmt.Printf("Version conflict found with file '%s'\n", relativePath+fileName)
+						fmt.Printf("\tFile hash: %s\n", e[1])
+						fmt.Printf("\tFile Index hash: %s\n", fileHashes[0])
+						fmt.Printf("\tHow would you like to proceed? Please enter 'updateFileIndex' or 'ignore'.\n")
+						fmt.Print("> ")
+						_, err = fmt.Scanln(&input)
+						if err != nil {
+							log.Fatal(err)
+						}
+
+						if input == "updateFileIndex" {
+							fileIndex[ne][1] = fileHashes[0]
+						} else if input != "ignore" {
+							log.Fatalf("Invalid input: '%s'", input)
+						}
+					} else if rgConfig.VersionConflictAction != "never" {
+						log.Fatalf("Invalid configuration VersionConflictAction value for Replication Group '%s': %s", rgConfig.Name, rgConfig.VersionConflictAction)
+					}
+				}
+			}
+
+			// Match was found, stop checking
+			matchFound = true
+			break
+		}
+
+		// If there is not an entry for this file in the File Index, or it has no "latest" version, append an entry
+		if !matchFound && rgConfig.VersionConflictAction == "updateFileIndex" {
+			fileIndex = append(fileIndex, []string{relativePath + fileName, fileHashes[0], "latest"})
+		} else if !matchFound && rgConfig.VersionConflictAction == "ask" {
+			var input string
+			fmt.Printf("No File Index entry found for file '%s' latest version\n", relativePath+fileName)
+			fmt.Printf("\tHow would you like to proceed? Please enter 'addEntry' or 'ignore'.\n")
+			fmt.Print("> ")
+			_, err = fmt.Scanln(&input)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			if input == "addEntry" {
+				fileIndex = append(fileIndex, []string{relativePath + fileName, fileHashes[0], "latest"})
+			} else if input != "ignore" {
+				log.Fatalf("Invalid input: '%s'", input)
+			}
+		} else if !matchFound && rgConfig.VersionConflictAction != "never" {
+			log.Fatalf("Invalid configuration VersionConflictAction value for Replication Group '%s': %s", rgConfig.Name, rgConfig.VersionConflictAction)
+		}
 	}
 }
 
 func main() {
 	// Startup output
+	const banner = `
+  _____ _  _         ____            _ _            _             
+ |  ___(_)| | ___   |  _ \ ___ _ __ | (_) ___ __ _| |_ ___  _ __ 
+ | |_  | || |/ _ \  | |_) / _ \ '_ \| | |/ __/ _' | __/ _ \| '__|
+ |  _| | || <  __/  |  _ <  __/ |_) | | | (_| (_| | || (_) | |   
+ |_|   |_||_|\___|  |_| \_\___| .__/|_|_|\___\__,_|\__\___/|_|   
+                              |_|                                 
+`
+
 	currentDirectory, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Starting file-replicator")
-	fmt.Printf("Currently running in directory %s", currentDirectory)
+	fmt.Printf("\n%s\n\n", banner)
+	fmt.Printf("Currently running in directory %s\n", currentDirectory)
 
 	// Config file is loaded on startup and can be rechecked by relaunching the application
 	// Default to config.json in the root directory
