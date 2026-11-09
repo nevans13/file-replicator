@@ -68,6 +68,11 @@ func sliceElementsEqual[T comparable](s []T) bool {
 	return true
 }
 
+// Return the File Index CSV header
+func getFileIndexHeader() string {
+	return "filepath,hash,version"
+}
+
 // Parse the configuration file and validate its contents, returning the config as an object
 func parseConfig(configFile string) (Config, error) {
 	// Read the configuration file from disk
@@ -107,7 +112,7 @@ func parseConfig(configFile string) (Config, error) {
 // Given the path to the File Index, return a structured list of files and their metadata
 func parseFileIndex(f string) ([][]string, error) {
 	// Define the target header row of the File Index CSV
-	const headerRow string = "filepath,hash,version"
+	var headerRow string = getFileIndexHeader()
 
 	// Attempt to load the File Index for this Replication Group
 	fileIndex, err := os.Open(f)
@@ -124,7 +129,7 @@ func parseFileIndex(f string) ([][]string, error) {
 			// Write the CSV header to the file
 			n, err := fileIndex.Write([]byte(headerRow + "\n"))
 			if err != nil || n == 0 {
-				return [][]string{}, fmt.Errorf("Could not write fileIndex header: %e", err)
+				return [][]string{}, fmt.Errorf("Could not write fileIndex header in function parseFileIndex: %e", err)
 			}
 
 			// Reset the cursor position to the beginning of the file for the subsequent read
@@ -179,6 +184,68 @@ func parseFileIndex(f string) ([][]string, error) {
 	}
 
 	return fileIndexStructured, nil
+}
+
+// Given the path to the File Index and the in-memory File Index contents, write the File Index to the CSV file
+// The file is entirely rewritten as part of the Replication Group processing
+func writeFileIndex(f string, fileIndex [][]string) error {
+	// Define the target header row of the File Index CSV
+	var headerRow string = getFileIndexHeader()
+
+	// Attempt to load the File Index for this Replication Group
+	file, err := os.Open(f)
+	if err != nil {
+		// Create the index and open it if it is not present, otherwise fail
+		var pathError *fs.PathError
+		if errors.As(err, &pathError) {
+			// Create the file index, using the declared file variable from the original open attempt
+			file, err = os.Create(f)
+			if err != nil {
+				return err
+			}
+		} else {
+			// Fail if the error from the attempted file open was not a PathError
+			return err
+		}
+	}
+
+	// At this point, we have an open File Index; defer the file close before proceeding
+	defer file.Close()
+
+	var fileIndexContents []byte = make([]byte, 1024) // read the file index in 1024-byte chunks
+	var fileIndexContentsString string
+	for {
+		// Read the next chunk of data from the file
+		n, err := file.Read(fileIndexContents)
+		if err != nil && err == io.EOF {
+			// This section is hit when there are no bytes to be read from the file
+			// If there are <1024 bytes (the []byte buffer is not filled), then that content is still read without error
+			break
+		} else if err != nil && err != io.EOF {
+			return fmt.Errorf("Could not read fileIndex file: %e", err)
+		} else {
+			fileIndexContentsString += string(fileIndexContents[:n]) // only append the number of bytes read (n) to the string to avoid padding up to 1024 bytes
+		}
+	}
+
+	// Write the CSV header to the file
+	_, err = file.Write([]byte(headerRow + "\n"))
+	if err != nil {
+		return fmt.Errorf("Could not write fileIndex header in function writeFileIndex: %e", err)
+	}
+
+	// Reset the cursor position to the beginning of the file for the subsequent read
+	file.Seek(0, io.SeekStart)
+
+	// Iterate through the potentially modified File Index from memory, writing each entry to the CSV file
+	for _, e := range fileIndex {
+		n, err := file.Write([]byte(e[0] + "," + e[1] + "," + e[2] + "\n"))
+		if err != nil || n == 0 {
+			return fmt.Errorf("Could not write a line to File Index %s: %e", f, err)
+		}
+	}
+
+	return nil
 }
 
 // Get the full filepaths for every file in the configured directories, appending them to the provided slice
@@ -401,6 +468,12 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 		} else if !matchFound && rgConfig.VersionConflictAction != "never" {
 			log.Fatalf("Invalid configuration VersionConflictAction value for Replication Group '%s': %s", rgConfig.Name, rgConfig.VersionConflictAction)
 		}
+	}
+
+	// Step 3 - rewrite the File Index file with the changes to the fileIndex multidimensional array
+	err = writeFileIndex(rgConfig.FileIndex, fileIndex)
+	if err != nil {
+		log.Fatal(err)
 	}
 }
 
