@@ -193,49 +193,19 @@ func writeFileIndex(f string, fileIndex [][]string) error {
 	var headerRow string = getFileIndexHeader()
 
 	// Attempt to load the File Index for this Replication Group
-	file, err := os.Open(f)
+	file, err := os.OpenFile(f, os.O_RDWR, 0644)
 	if err != nil {
-		// Create the index and open it if it is not present, otherwise fail
-		var pathError *fs.PathError
-		if errors.As(err, &pathError) {
-			// Create the file index, using the declared file variable from the original open attempt
-			file, err = os.Create(f)
-			if err != nil {
-				return err
-			}
-		} else {
-			// Fail if the error from the attempted file open was not a PathError
-			return err
-		}
+		return err
 	}
 
 	// At this point, we have an open File Index; defer the file close before proceeding
 	defer file.Close()
-
-	var fileIndexContents []byte = make([]byte, 1024) // read the file index in 1024-byte chunks
-	var fileIndexContentsString string
-	for {
-		// Read the next chunk of data from the file
-		n, err := file.Read(fileIndexContents)
-		if err != nil && err == io.EOF {
-			// This section is hit when there are no bytes to be read from the file
-			// If there are <1024 bytes (the []byte buffer is not filled), then that content is still read without error
-			break
-		} else if err != nil && err != io.EOF {
-			return fmt.Errorf("Could not read fileIndex file: %e", err)
-		} else {
-			fileIndexContentsString += string(fileIndexContents[:n]) // only append the number of bytes read (n) to the string to avoid padding up to 1024 bytes
-		}
-	}
 
 	// Write the CSV header to the file
 	_, err = file.Write([]byte(headerRow + "\n"))
 	if err != nil {
 		return fmt.Errorf("Could not write fileIndex header in function writeFileIndex: %e", err)
 	}
-
-	// Reset the cursor position to the beginning of the file for the subsequent read
-	file.Seek(0, io.SeekStart)
 
 	// Iterate through the potentially modified File Index from memory, writing each entry to the CSV file
 	for _, e := range fileIndex {
@@ -352,7 +322,7 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 
 	// Iterate over every file in the first directory, applying Replication Group policy to it by performing the following steps:
 	// a) Collect the locations of all instances of the file in the directories (including the first directory) based on its relative path
-	// b) Check for and handle any hash conflicts among the files
+	// b) Check for and handle any hash conflicts among the files present in the directories
 	// c) Handle updates to the file index multidimensional array
 	// d) Resolve any missing files
 	for _, f := range filepaths {
@@ -412,7 +382,7 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 		// Step 1c - update File Index
 		// Iterate of the file index to get the entry for the current file
 		var matchFound bool = false
-		for ne, e := range fileIndex {
+		for ne, e := range fileIndex { // "ne" = number of "e"
 			if e[0] == relativePath+fileName && e[2] == "latest" {
 				// If file and file index hashes do not match, act based on the VersionConflictAction
 				// The fileHashes slice remains current with the state of the filesystem, so upon reaching this step, file hashes should all be equal
