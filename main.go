@@ -410,11 +410,11 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 						log.Fatalf("Invalid configuration VersionConflictAction value for Replication Group '%s': %s", rgConfig.Name, rgConfig.VersionConflictAction)
 					}
 				}
-			}
 
-			// Match was found, stop checking
-			matchFound = true
-			break
+				// Match was found, stop checking
+				matchFound = true
+				break
+			}
 		}
 
 		// If there is not an entry for this file in the File Index, or it has no "latest" version, append an entry
