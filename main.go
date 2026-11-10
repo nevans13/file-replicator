@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // The Metadata fields from the config file
@@ -377,6 +378,38 @@ func processReplicationGroup(rgConfig ReplicationGroup, wg *sync.WaitGroup, opsC
 		// If at least one of the files is different from the others, process the conflict(s) before proceeding
 		if !sliceElementsEqual(fileHashes) {
 			// NEEDS DEVELOPMENT
+
+			// Act based on the HashConflictAction
+			if rgConfig.HashConflictAction == "replicateNewest" {
+				// newestFile holds the path and last modified date of the newest file
+				// The file stored in newestFile is presumed to be the newest until the loop below completes
+				var newestFile struct {
+					file         string
+					lastModified time.Time
+				}
+
+				// Loop through each of the found file instances to determine which is the newest
+				for _, uf := range fileInstances { // "uf" = unequal file
+					// Determine the file info including the last modified time
+					fileInfo, err := os.Stat(uf)
+					if err != nil {
+						log.Fatal(err)
+					}
+
+					// If the newest file has not been set yet (ie this is the first iteration), set it explicitly
+					if newestFile.file == "" {
+						newestFile.file = uf
+						newestFile.lastModified = fileInfo.ModTime()
+					} else if fileInfo.ModTime().After(newestFile.lastModified) {
+						// If the file currently being iterated over was modified after the presumed newest file, then it is actually the presume newest file
+						newestFile.file = uf
+						newestFile.lastModified = fileInfo.ModTime()
+					}
+				}
+			} else if rgConfig.HashConflictAction == "ask" {
+			} else if rgConfig.HashConflictAction != "never" {
+				log.Fatalf("Invalid configuration HashConflictAction value for Replication Group '%s': %s", rgConfig.Name, rgConfig.VersionConflictAction)
+			}
 		}
 
 		// Step 1c - update File Index
